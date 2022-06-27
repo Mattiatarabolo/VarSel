@@ -233,7 +233,9 @@ run_env_bd_MCMC = function(tree, f, f.lamb, f.mu, prior = NULL, start_gen, par_n
   
   if (!inherits(phylo, "phylo"))
     stop("object \"phylo\" is not of class \"phylo\"")
-  
+
+  npar = length(par_names)
+
   nbtips <- Ntip(phylo)
   from_past <- cbind(phylo$edge,node.age(phylo)$ages)
   ages <- rbind(from_past[,2:3],c(nbtips+1,0))
@@ -252,10 +254,8 @@ run_env_bd_MCMC = function(tree, f, f.lamb, f.mu, prior = NULL, start_gen, par_n
   }
   
   likelihood <- compiler::cmpfun(likelihood)
-
-  if (is.null(prior)) prior = function(par)dunif(par, min = c(0, 0, -5), max = c(5, 5, 5))
   
-  npar = 3
+  if (is.null(prior)) prior = function(par)dunif(par, min = c(0, 0, rep(-5, npar)), max = c(5, 5, rep(5,npar)))
     
   post = function(par) {
     if (any(par[1:2] < 0)) {
@@ -308,5 +308,25 @@ run_env_bd_MCMC = function(tree, f, f.lamb, f.mu, prior = NULL, start_gen, par_n
     cat("Minimum ESS: ", ess, "\n")
     tot_iter = tot_iter + iteration
   }
+  
+  sampler2 = parallel::mclapply(1:3,function(j){
+     set.seed(j)
+     modelI = model
+     modelI$tuning = sampler[[j]]$finetune
+     modelI$start_val = sampler[[j]]$chain[NROW(sampler[[j]]$chain), 1:npar]
+     filename=paste(pamhLocalName,"_chain_",j,"_mcmc.log.txt",sep="")
+     return(autoMetropolisGibbs(modelI, iterations = iteration, consoleupdates = 100, thin = thin, autoOptimize = F,
+                                filename=filename, update = update, adaptation = adaptation, verbose = T))
+  }, mc.cores = nCPU, mc.silent = T)
+
+  for(j in 1:3){sampler[[j]]$chain = coda::mcmc(rbind(sampler[[j]]$chain, sampler2[[j]]$chain[-1,]))}
+  rep = coda::mcmc.list(lapply(1:3,function(j){coda::mcmc(sampler[[j]]$chain[-(1:10),-c((npar+1):(npar+3))])}))
+  gelman = try(coda::gelman.diag(rep))
+  if(! inherits(gelman,"try-error")) {gelman = max(gelman$psrf[,2])} else {gelman = 2}
+  cat("Final maximum Gelman statistic: ", gelman, "\n")
+  ess = try(coda::effectiveSize(rep))
+  if(! inherits(ess, "try-error")) {ess = min(ess)} else {ess = 100}
+  cat("Final minimum ESS: ", ess, "\n")
+
   return(sampler)
 }
