@@ -2,10 +2,9 @@ library(RPANDA)
 
 sessionInfo()
 inputs <- c(commandArgs(trailingOnly=TRUE))
-jobId <- "1"#inputs[1]
-extinction_rate = "const"#inputs[2]
-
-set.seed(as.numeric(jobId)+1)
+jobId <- inputs[3] # Seed value for the random generation 
+extinction_rate = inputs[4] #Options: const, ratio
+set.seed(as.numeric(jobId))
 
 #############################################################################################################
 ###################                                                                       ###################
@@ -13,7 +12,6 @@ set.seed(as.numeric(jobId)+1)
 ###################                                                                       ###################
 #############################################################################################################
 source("./Functions/sim_env_bd_mod_c.R")
-source("./Functions/sim_env_bd.R")
 
 #############################################################################################################
 ###################                                                                       ###################
@@ -24,7 +22,7 @@ source("./Functions/sim_env_bd.R")
 
 #################                     Phylogenetic tree simulation                   #########################
 
-tot_time <- 40
+tot_time <- 40  #Total time of the phylogeny
 
 # Environmental function definition
 load("./Data/InfTemp.R")
@@ -37,7 +35,7 @@ env_list <- list("Temperature" = InfTemp, "CO2" = co2, "SeaLevel" = sealevel, "d
 env_list_names = c("Temperature", "CO2", "SeaLevel", "d13C" , "Silica")
 env_num_tot <- length(env_list)
 
-env_name <- c("Temperature", "CO2") 
+env_name <- c(inputs[1], inputs[2]) # Environmental function for the genration of the tree
 env_num <- 2
 
 time_env <- list()
@@ -61,7 +59,7 @@ if(tot_time_env < tot_time){print("!!!WARNING!!! tot_time_env < tot_phylo_time")
 #rm(InfTemp, co2, sealevel, silica, d13c)
 
 # Smoothing of the env data and environmental function
-dof <- c(500, 50, rep(500, 2), rep(50, env_num_tot - 4))
+dof <- c(500, 30, rep(500, 2), 30)  # degrees of freedom for the smoothing of the environmental functions
 names(dof) = env_list_names
 
 spline_result <- list()
@@ -96,16 +94,18 @@ env_func_tab <- function(t){
   return(matrix(env_tabulated[index,], length(t), env_num))
 }
 
-#rm(env_data, env_list, spline_result, time_env, tot_times_env, dof, lower_bound, lower_bound_control, name, time_tabulated,
-#upper_bound, upper_bound_control, env_func)
+rm(env_data, env_list, spline_result, time_env, tot_times_env, dof, lower_bound, lower_bound_control, name, time_tabulated,
+   upper_bound, upper_bound_control, env_func)
 
-par_names <- c("lambda_0", "mu_0",
-               "theta_T", "theta_CO2")
+par_names <- c("lambda_0", "mu_0", "theta_1", "theta_2")
 
+# Setting the parameters
 if (extinction_rate == "const") {
     par <- c(0.07, 0.06, 2, -0.3)
+    names(par) = par_names
   } else if (extinction_rate == "ratio") {
     par <- c(0.08, 0.06, 2, -0.2)
+    names(par) = par_names
   }
 
 # Constant extinction rate, variable speciation rate
@@ -122,5 +122,5 @@ while(class(phylo) != "phylo"){
                             prune.extinct = TRUE)$tree
 }
 
-saveRDS(phylo, file = paste("/data/biodiv/tarabolo/treesim_twovar/outdata/phylo/phylo_40_",extinction_rate, "_", jobId, ".rds", sep = ""))
-saveRDS(par, file = paste("/data/biodiv/tarabolo/treesim_onevar/outdata/par/par_40_",extinction_rate, "_", jobId, ".rds", sep = ""))
+saveRDS(phylo, file = paste("phylo/phylo_", tot_time, "_", extinction_rate, "_", env_name[1], "_", env_name[2], "_", jobId, ".rds", sep = ""))
+saveRDS(par, file = paste("phylo/par_", tot_time, "_", extinction_rate, "_", env_name[1], "_", env_name[2], "_", jobId, ".rds", sep = ""))

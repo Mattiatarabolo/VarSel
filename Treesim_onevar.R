@@ -2,9 +2,9 @@ library(RPANDA)
 
 sessionInfo()
 inputs <- c(commandArgs(trailingOnly=TRUE))
-jobId <- "2"#inputs[2]
-extinction_rate = "const"#inputs[3]
-set.seed(as.numeric(jobId)+1)
+jobId <- inputs[2] # Seed value for the random generation 
+extinction_rate = inputs[3] #Options: const, ratio
+set.seed(as.numeric(jobId))
 
 #############################################################################################################
 ###################                                                                       ###################
@@ -12,7 +12,6 @@ set.seed(as.numeric(jobId)+1)
 ###################                                                                       ###################
 #############################################################################################################
 source("./Functions/sim_env_bd_mod_c.R")
-source("./Functions/sim_env_bd.R")
 
 #############################################################################################################
 ###################                                                                       ###################
@@ -23,7 +22,7 @@ source("./Functions/sim_env_bd.R")
 
 #################                     Phylogenetic tree simulation                   #########################
 
-tot_time <- 40
+tot_time <- 40  #Total time of the phylogeny
 
 # Environmental function definition
 load("./Data/InfTemp.R")
@@ -36,7 +35,7 @@ env_list <- list("Temperature" = InfTemp, "CO2" = co2, "SeaLevel" = sealevel, "d
 env_list_names = c("Temperature", "CO2", "SeaLevel", "d13C" , "Silica")
 env_num_tot <- length(env_list)
 
-env_name <- "Temperature"#inputs[1]
+env_name <- inputs[1] # Environmental function for the genration of the tree
 env_num <- 1
 
 time_env <- list()
@@ -60,7 +59,7 @@ if(tot_time_env < tot_time){print("!!!WARNING!!! tot_time_env < tot_phylo_time")
 rm(InfTemp, co2, sealevel, silica, d13c)
 
 # Smoothing of the env data and environmental function
-dof <- c(500, 100, rep(500, 2), rep(50, env_num_tot - 4))
+dof <- c(500, 30, rep(500, 2), 30) # degrees of freedom for the smoothing of the environmental functions
 names(dof) = env_list_names
 
 spline_result <- list()
@@ -98,15 +97,16 @@ env_func_tab <- function(t){
 rm(env_data, env_list, spline_result, time_env, tot_times_env, dof, lower_bound, lower_bound_control, name, time_tabulated,
    upper_bound, upper_bound_control, env_func)
 
-par_names <- c("lambda_0", "mu_0",
-               "G_T", "G_CO2", "G_sea", "G_Si", "G_d13C")
+par_names <- c("lambda_0", "mu_0", "theta")
 
+# Setting the parameters
 if (extinction_rate == "const") {
-    par <- c(0.04, 0.02, 0)
+    par <- c(0.04, 0.02, 1.1)
+    names(par) = par_names
   } else if (extinction_rate == "ratio") {
     par <- c(0.02, 0.02, 1.1)
+    names(par) = par_names
   }
-
 
 # Constant extinction rate, variable speciation rate
 f.lamb <- function(t, env){par[1]*exp(env*par[3])}
@@ -116,40 +116,11 @@ if (extinction_rate == "const") {
   f.mu <- function(t, env){par[2]*f.lamb(t, env)}
 }
 
-set.seed(3)
-phyloext <- NULL
-while(class(phyloext) != "phylo"){
-  phyloext <- sim_env_bd_mod_c(env.func = env_func_tab, f.lamb = f.lamb, f.mu = f.mu, time.stop = tot_time, return.all.extinct = TRUE,
-                            prune.extinct = F)$tree
-}
-phyloext$edge.length[5] = 2
-phyloext$edge.length[7] = 4
-phyloext$edge.length[8] = phyloext$edge.length[8] -2
-phyloext$edge.length[4] = phyloext$edge.length[4] - 2
-phyloext$edge.length[9] = phyloext$edge.length[9] + 2
-phyloext$edge.length[10] = phyloext$edge.length[10] + 2
-plot(phyloext, type = "phylogram", node.pos = NULL, show.tip.label = F, show.node.label = F, 
-     edge.color = c(rep("red", 6), "black", rep("red", 2), "black"), edge.width= c(rep(3, 6), 1, rep(3, 2), 1), plot = TRUE)
-axisPhylo()
-mtext("Time (Myrs)", side = 1, line = 3.3, at = 10, cex = 2.5)
-
-
-set.seed(3)
 phylo <- NULL
 while(class(phylo) != "phylo"){
   phylo <- sim_env_bd_mod_c(env.func = env_func_tab, f.lamb = f.lamb, f.mu = f.mu, time.stop = tot_time, return.all.extinct = TRUE,
-                            prune.extinct = T)$tree
+                            prune.extinct = F)$tree
 }
-phylo$edge = phylo$edge[-7,]
-phylo$edge.length = phylo$edge.length[-7]
-#phylo$Nnode = phylo$Nnode - 1
-par(cex.axis=2.5, cex.lab=2.5, cex.main=2.5, cex.sub=2.5)
-# phylo$tip.label  =as.character(1:4)
-plot(phylo, type = "phylogram", node.pos = NULL, show.tip.label = F, show.node.label = F,
-     edge.color = NULL, edge.width= 3, edge.lty = NULL, node.color = "red", node.width = 3, tip.color = "red", 
-     plot = TRUE)
-axisPhylo()
-mtext("Time (Myrs)", side = 1, line = 3.3, at = 10, cex = 2.5)
 
-#saveRDS(phylo, file = paste("/data/biodiv/tarabolo/treesim_onevar/outdata/", extinction_rate, "/phylo_40_", env_name, "_", jobId, ".rds", sep = ""))
-#saveRDS(par, file = paste("/data/biodiv/tarabolo/treesim_onevar/outdata/par/par_40_", env_name, "_", jobId, ".rds", sep = ""))
+saveRDS(phylo, file = paste("phylo/phylo_", tot_time, "_", extinction_rate, "_", env_name, "_", jobId, ".rds", sep = ""))
+saveRDS(par, file = paste("phylo/par_", tot_time, "_", extinction_rate, "_", env_name, "_", jobId, ".rds", sep = ""))
