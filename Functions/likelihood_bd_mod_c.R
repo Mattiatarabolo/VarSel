@@ -1,6 +1,7 @@
 ########################                Logarithmic likelihood             ###################################
-likelihood_bd_mod <- function(nbtips, age, tjs, f.lamb,f.mu,f,dt=0,cond="crown")
+likelihood_bd_mod <- function(nbtips, age, tjs, f.lamb, f.mu, f, dt=0, cond = "crown")
 {
+  
   if(dt != 0)
   {
     X <- seq(0, age + dt, by = dt)

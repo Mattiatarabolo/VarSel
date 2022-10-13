@@ -30,7 +30,7 @@ source("./Functions/proposal.R")
 
 #################                   Phylogenetic tree simulation                   #########################
 
-phylo <- readRDS(paste("phylo/phylo_40_", extinction_rate, "_Temperature_",  JobId, ".rds", sep = ""))
+phylo <- readRDS(paste("phylo/phylo_52_", extinction_rate, "_Temperature_",  JobId, ".rds", sep = ""))
 
 # Total time and sampling fraction
 tot_time <- max(node.age(phylo)$ages)  #crown age of the phylogeny
@@ -49,17 +49,15 @@ env_num_tot <- length(env_list)
 
 env_name <- c("Temperature")
 env_num <- 1
-tot_time_env = 40  #Used for smoothing of the environmental function
+tot_time_env = 52  #Used for smoothing of the environmental function
 
 time_env <- list()
-tot_times_env <- list()
 env_data <- list()
 env_scales <- list()
 env_baseline <- list()
 
 for(name in env_name){
   time_env[[name]] <- env_list[[name]][env_list[[name]][,1] <= tot_time_env, 1]
-  tot_times_env[[name]] <- max(env_list[[name]][env_list[[name]][,1] <= tot_time_env, 1])
   env_scales[[name]] <-  max((env_list[[name]][env_list[[name]][,1] <= tot_time_env,2]-min(env_list[[name]][env_list[[name]][,1] <= tot_time_env,2])))
   env_baseline[[name]] <- min(env_list[[name]][env_list[[name]][,1] <= tot_time_env,2])
   env_data[[name]] <- (env_list[[name]][env_list[[name]][,1] <= tot_time_env,2] - env_baseline[[name]])/env_scales[[name]]#curves standardization
@@ -67,7 +65,7 @@ for(name in env_name){
 
 if(tot_time_env < tot_time){print("!!!WARNING!!! tot_time_env < tot_phylo_time")}
 
-rm(InfTemp, env_list)
+rm(InfTemp, env_list, co2, sealevel, silica, d13c)
 
 # Smoothing of the env data and environmental function
 dof <- c(500, 30, rep(500, 2), 30) # degrees of freedom for the smoothing of the environmental functions
@@ -75,12 +73,12 @@ names(dof) = env_list_names
 
 spline_result <- list()
 for(j in 1:env_num){
-  spline_result[[env_names[j]]] <- smooth.spline(time_env[[env_names[j]]], env_data[[env_names[j]]], df = dof[j])
+  spline_result[[env_name[j]]] <- smooth.spline(time_env[[env_name[j]]], env_data[[env_name[j]]], df = dof[j])
 }
 
 env_func <- function(t) {
   env_pred <- matrix(0, length(t), env_num)
-  for (j in 1:env_num){env_pred[,j] = predict(spline_result[[env_names[j]]], t)$y}
+  for (j in 1:env_num){env_pred[,j] = predict(spline_result[[env_name[j]]], t)$y}
   return(env_pred)
 }
 
@@ -89,7 +87,7 @@ env_func <- function(t) {
 lower_bound_control <- 0.10
 upper_bound_control <- 0.10
 lower_bound <- as.double(0)
-upper_bound <- to1t_time
+upper_bound <- tot_time_env
 upper_bound_tab <- upper_bound + upper_bound_control*(upper_bound-lower_bound)
 lower_bound_tab <- lower_bound - lower_bound_control*(upper_bound-lower_bound)
 
@@ -108,7 +106,7 @@ env_func_tab <- function(t){
 rm(env_data, spline_result, time_env, tot_times_env, dof, j, lower_bound, lower_bound_control, name, time_tabulated,
    upper_bound, upper_bound_control, env_func)
 
-# Constant extinction rate, variable speciation rate
+# Choice of the extinction rate
 f.lamb <- function(t, par){par[1]*exp(env_func_tab(t)*par[3])}
 if (extinction_rate == "const") {
   f.mu <- function(t, par){par[2]}
@@ -145,11 +143,11 @@ priorDensity <- compiler::cmpfun(priorDensity)
 par_names <- c("lambda_0", "mu_0", "theta")
 
 # logfile for the MCMC, can be used in tracer
-pamhLocalName = paste("tracer_logfile/tracer_logfile_", extinction_rate, "_", which_prior, "_", env_name, "_", Job, sep = "")
+pamhLocalName = paste("tracer_logfile/tracer_logfile_", extinction_rate, "_", which_prior, "_", env_name, "_", JobId, sep = "")
 
-sampler <- run_env_bd_MCMC(tree = phylo, f = f_total, f.lamb = f.lamb, f.mu = f.mu, prior = priorDensity, start_gen = parGen, 
-                           par_names = par_names, pamhLocalName = pamhLocalName, proposalKernel = "uniform", iteration = 1e4, 
-                           thin = 1e2, update = 1e2, adaptation = 1e4, max_iter = 5e5, seed = NULL, nCPU = 3)
+sampler <- run_env_bd_MCMC(tree = phylo, f = f, f.lamb = f.lamb, f.mu = f.mu, prior = priorDensity, start_gen = parGen, 
+                           par_names = par_names, pamhLocalName = pamhLocalName, proposalKernel = "uniform", iteration = 1e3, 
+                           thin = 1, update = 10, adaptation = 1e2, max_iter = 1e4, seed = NULL, nCPU = 1)
 
 #MCMC estimation
 chain_list = coda::mcmc.list(lapply(1:3,function(j){coda::mcmc(sampler[[j]]$chain[-(1:10),1:3])}))
@@ -167,6 +165,7 @@ tjs <- ages[2:(length(ages[,2])-nbtips),2]
 rm(from_past, ages)
 
 likelihood <- function(par){
+  if (par[1] < 0 || par[2] < 0) return(-Inf)
   f.lamb.env <- function(t){f.lamb(t, par)}
   f.mu.env <- function(t){f.mu(t, par)}
   ll <- likelihood_bd_mod_c(nbtips, age, tjs, f.lamb.env, f.mu.env, f = f, dt = 1e-4, cond = "crown")

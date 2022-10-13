@@ -247,6 +247,7 @@ run_env_bd_MCMC = function(tree, f, f.lamb, f.mu, prior = NULL, start_gen, par_n
   rm(from_past, ages)
   
   likelihood <- function(par){
+    if (par[1] < 0 || par[2] < 0) return(-Inf)
     f.lamb.env <- function(t){f.lamb(t, par)}
     f.mu.env <- function(t){f.mu(t, par)}
     ll <- likelihood_bd_mod_c(nbtips, age, tjs, f.lamb.env, f.mu.env, f, dt = 1e-4, cond = "crown")

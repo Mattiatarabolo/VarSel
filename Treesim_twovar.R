@@ -22,7 +22,7 @@ source("./Functions/sim_env_bd_mod_c.R")
 
 #################                     Phylogenetic tree simulation                   #########################
 
-tot_time <- 40  #Total time of the phylogeny
+tot_time <- 52  #Total time of the phylogeny
 
 # Environmental function definition
 load("./Data/InfTemp.R")
@@ -101,14 +101,14 @@ par_names <- c("lambda_0", "mu_0", "theta_1", "theta_2")
 
 # Setting the parameters
 if (extinction_rate == "const") {
-    par <- c(0.07, 0.06, 2, -0.3)
+    par <- c(0.08, 0.01, 1.3, -0.2)
     names(par) = par_names
   } else if (extinction_rate == "ratio") {
-    par <- c(0.08, 0.06, 2, -0.2)
+    par <- c(0.08, 0.01, 1.3, -0.2)
     names(par) = par_names
   }
 
-# Constant extinction rate, variable speciation rate
+# Choice of the extinction rate
 f.lamb <- function(t, env){par[1]*exp(env%*%par[3:4])}
 if (extinction_rate == "const") {
   f.mu <- function(t, env){par[2]}
@@ -118,8 +118,8 @@ if (extinction_rate == "const") {
 
 phylo <- NULL
 while(class(phylo) != "phylo"){
-  phylo <- sim_env_bd_mod_c(env.func = env_func_tab, f.lamb = f.lamb, f.mu = f.mu, time.stop = tot_time, return.all.extinct = TRUE,
-                            prune.extinct = TRUE)$tree
+  phylo <- sim_env_bd_mod_c(env.func = env_func_tab, f.lamb = f.lamb, f.mu = f.mu, time.stop = tot_time, 
+                            max.size = 3000, return.all.extinct = TRUE, prune.extinct = TRUE)$tree
 }
 
 saveRDS(phylo, file = paste("phylo/phylo_", tot_time, "_", extinction_rate, "_", env_name[1], "_", env_name[2], "_", jobId, ".rds", sep = ""))

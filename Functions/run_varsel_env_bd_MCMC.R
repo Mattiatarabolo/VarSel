@@ -1,9 +1,10 @@
-create_model = function(start_val, par_names, posterior, reparametrize, proposalKernel, tuning=1) {
+create_model = function(start_val, par_names, posterior, reparametrize, posterior_reparametrize, proposalKernel, tuning=1) {
   model = list()
   model$start_val = start_val
   model$par_names = par_names
   model$posterior = posterior
   model$reparametrize = reparametrize
+  model$postrepar = posterior_reparametrize
   model$proposalKernel = proposalKernel
   model$tuning = tuning
   model$proposalfunction2 = function(param, tuning, indice) {
@@ -39,7 +40,7 @@ autoMetropolisGibbs = function(model, startvalue, iterations, consoleupdates = 1
   ## ---
   mcmc_step = matrix(ncol=nparam+3, nrow=1)
   mcmc_step_transform = matrix(ncol=nparam+3, nrow=1)
-  post = model$posterior(model$reparametrize(startvalue))
+  post = model$posterior(startvalue)
   if (is.infinite(post$LP)) stop("\r","Check if the starting values matches the priors","\r")
   current = post$LP
   mcmc_step[1:(nparam+3)] = c(startvalue, current, post$LL, post$Pr)
@@ -66,8 +67,8 @@ autoMetropolisGibbs = function(model, startvalue, iterations, consoleupdates = 1
   update = ifelse(is.null(param[["update"]]), 1000, param$update)
   adaptation = ifelse(is.null(param[["adaptation"]]), update*4, param$adaptation)
   verbose = ifelse(is.null(param[["verbose"]]), TRUE, param$verbose)
-  random = ifelse(is.null(param[["random"]]), FALSE, param$random)
-  blocks = ifelse(is.null(param[["blocks"]]), 1, param$blocks)
+  blocking = ifelse(is.null(param[["blocking"]]), "no", param$blocking)  # no, random or user
+  blocks = ifelse(is.null(param[["blocks"]]), 1, param$blocks)  # if blocking == "no" blocks = 1, if "random" blocks is number of random blocks, if "user" blocks is user-defined list with indices of blocks
   
   tuning = model$tuning
   
@@ -96,20 +97,30 @@ autoMetropolisGibbs = function(model, startvalue, iterations, consoleupdates = 1
     for (i in 1:iterOptim) {
       
       ## --- Loop over the variables (Metropolis-within-Gibbs) algorithm (we can make it random by sampling from a vector of 
-      ## --- randomized indices)
-      indices = ifelse(random == FALSE, variables, sample(variables, blocks))
+      ## --- randomized indices, or from a predefined list)
+      if (blocking == "no") {
+        indices = variables
+      } else if (blocking == "random") {
+        indices = sample(variables, blocks)
+      } else if (blocking == "user") {
+        indices = blocks
+      }
+      
       for (j in indices) {
         
         proposalValues = model$proposalfunction2(mcmc_step[1:nparam], tuning = tuning[j], indice=j)
         proposal = proposalValues$proposal
+        repar_proposal = model$reparametrize(proposal)
         hastings = proposalValues$hastings
         
         ## ------ Compute the ratio
         
-        post_val = model$posterior(model$reparametrize(proposal))
+        post_val = model$posterior(repar_proposal)
         newpost = post_val$LP
         probval = newpost - current + hastings
         probab = exp(probval)
+        post_val_repar = model$posterior(repar_proposal)
+        newpost_repar = post_val$LP
         
         # NOTE: there are several waste of times: generation of new proposals, computation of the likelihood for both the tree and priors
         
@@ -121,15 +132,14 @@ autoMetropolisGibbs = function(model, startvalue, iterations, consoleupdates = 1
           mcmc_step[nparam+1] = newpost
           mcmc_step[nparam+2] = post_val$LL
           mcmc_step[nparam+3] = post_val$Pr
-          mcmc_step_transform[1:nparam] = model$reparametrize(proposal)
-          mcmc_step_transform[nparam+1] = newpost
-          mcmc_step_transform[nparam+2] = post_val$LL
-          mcmc_step_transform[nparam+3] = post_val$Pr
+          mcmc_step_transform[1:nparam] = repar_proposal
+          mcmc_step_transform[nparam+1] = newpost_repar
+          mcmc_step_transform[nparam+2] = post_val_repar$LL
+          mcmc_step_transform[nparam+3] = post_val_repar$Pr
           acc_val[j] = acc_val[j] + 1
         }
-      }# End loop over variables
-      
-      
+      }
+      # End loop over variables
       
       ## ------ Update the tuning parameter
       
@@ -179,36 +189,44 @@ autoMetropolisGibbs = function(model, startvalue, iterations, consoleupdates = 1
   conn = file(filename, open="a")
   
   for (i in 1:iterations){
-    
-    ## --- Loop over the variables (Metropolis-within-Gibbs) algorithm
-    j = ifelse(random == FALSE, (i-1)%%(nparam)+1, sample(variables,blocks)) 
-    # we can put a function outside the loop to avoid the if statement
-    
-    proposalValues = model$proposalfunction2(mcmc_step[1:nparam], tuning = tuning[j], indice=j)
-    proposal = proposalValues$proposal
-    hastings = proposalValues$hastings
-    
-    ## ------ Compute the ratio
-    
-    post_val = model$posterior(model$reparametrize(proposal))
-    newpost = post_val$LP
-    probval = newpost - current + hastings
-    probab = exp(probval)
-    
-    ## ------ Evaluate the ratio
-    
-    if (probval > 0 || probab > runif(1)){
-      current = newpost
-      mcmc_step[1:nparam] = proposal
-      mcmc_step[nparam+1] = newpost
-      mcmc_step[nparam+2] = post_val$LL
-      mcmc_step[nparam+3] = post_val$Pr
-      mcmc_step_transform[1:nparam] = model$reparametrize(proposal)
-      mcmc_step_transform[nparam+1] = newpost
-      mcmc_step_transform[nparam+2] = post_val$LL
-      mcmc_step_transform[nparam+3] = post_val$Pr
+    if (blocking == "no") {
+      indices = variables
+    } else if (blocking == "random") {
+      indices = sample(variables, blocks)
+    } else if (blocking == "user") {
+      indices = blocks
     }
     
+    ## --- Loop over the variables (Metropolis-within-Gibbs) algorithm
+    for (j in indices) {
+      proposalValues = model$proposalfunction2(mcmc_step[1:nparam], tuning = tuning[j], indice=j)
+      proposal = proposalValues$proposal
+      repar_proposal = model$reparametrize(proposal)
+      hastings = proposalValues$hastings
+      
+      ## ------ Compute the ratio
+      
+      post_val = model$posterior(repar_proposal)
+      newpost = post_val$LP
+      probval = newpost - current + hastings
+      probab = exp(probval)
+      post_val_repar = model$posterior(repar_proposal)
+      newpost_repar = post_val$LP
+      
+      ## ------ Evaluate the ratio
+      
+      if (probval > 0 || probab > runif(1)){
+        current = newpost
+        mcmc_step[1:nparam] = proposal  # parameters
+        mcmc_step[nparam+1] = newpost
+        mcmc_step[nparam+2] = post_val$LL
+        mcmc_step[nparam+3] = post_val$Pr
+        mcmc_step_transform[1:nparam] = repar_proposal  # parameters
+        mcmc_step_transform[nparam+1] = newpost_repar
+        mcmc_step_transform[nparam+2] = post_val_repar$LL
+        mcmc_step_transform[nparam+3] = post_val_repar$Pr
+      }
+    }
     
     ## ------- Save the chain to a file
     if( i %% thin == 0 ){
@@ -216,7 +234,7 @@ autoMetropolisGibbs = function(model, startvalue, iterations, consoleupdates = 1
       write.table(mcmc_step_transform, file=conn, append=TRUE, sep = "\t", col.names=FALSE, row.names=i, quote=FALSE)
     }
     
-    if( i %% consoleupdates == 0 & verbose == TRUE){
+    if (i %% consoleupdates == 0 & verbose == TRUE) {
       cat("\r", "MCMC in progress", i, "of", iterations, "please wait!", "\r")
       cat("\n","MCMC in progress", i, "of", iterations, "please wait! \n" )
     } 
@@ -242,7 +260,7 @@ autoMetropolisGibbs = function(model, startvalue, iterations, consoleupdates = 1
 run_varsel_env_bd_MCMC = function(tree, f, f.lamb, f.mu, start_gen, par_names, env_num, pamhLocalName, proposalKernel = "bactrian", 
                            iteration = 1e5, thin = 2e3, update = 1e2, adaptation = 1e4, max_iter = 1e6, seed = NULL, nCPU = 3) 
 {
-  if(! is.null(seed)) set.seed(seed)
+  if (! is.null(seed)) set.seed(seed)
   
   if (!inherits(phylo, "phylo"))
     stop("object \"phylo\" is not of class \"phylo\"")
@@ -252,12 +270,15 @@ run_varsel_env_bd_MCMC = function(tree, f, f.lamb, f.mu, start_gen, par_names, e
   ages <- rbind(from_past[,2:3],c(nbtips+1,0))
   ages <- ages[order(ages[,2]),]
   age <- max(ages[,2])
-  ages[,2] = age- ages[,2]
+  ages[,2] = age - ages[,2]
   tjs <- ages[2:(length(ages[,2])-nbtips),2]
+  
+  npar = length(par_names)
   
   rm(from_past, ages)
   
   likelihood <- function(par){
+    if (par[1] < 0 || par[2] < 0) return(-Inf)
     f.lamb.env <- function(t){f.lamb(t, par)}
     f.mu.env <- function(t){f.mu(t, par)}
     ll <- likelihood_bd_mod_c(nbtips, age, tjs, f.lamb.env, f.mu.env, f, dt = 1e-4, cond = "crown")
@@ -266,17 +287,25 @@ run_varsel_env_bd_MCMC = function(tree, f, f.lamb, f.mu, start_gen, par_names, e
   
   likelihood <- compiler::cmpfun(likelihood)
   
-  npar = 3 + 2*env_num
-  
-  prior = function(par) {
+  prior = function (par) {
     prior_base = sum(dexp(par[1:2], rate = 3, log = T))
-    prior_corr = sum(dnorm(par[3:(2 + env_num)], mean = 0, sd = par[(3 + env_num):(3 + 2*env_num)]^2 * par[3 + 2*env_num]^2))
-    hyperprior_shrink = sum(dhalfcauchy(par[(3 + env_num):(3 + 2*env_num)], scale = 1, log = T))
+    prior_corr = sum(dnorm(par[3:(2 + env_num)], mean = 0, sd = 1))
+    hyperprior_shrink = sum(dunif(par[(3 + env_num):(2 + 2*env_num)], min = 0, max = 1, log = T))
     
     return(prior_base + prior_corr + hyperprior_shrink)
   }
   
   prior = compiler::cmpfun(prior)
+  
+  prior_repar = function(par) {
+    prior_base = sum(dexp(par[1:2], rate = 3, log = T))
+    prior_corr = sum(dnorm(par[3:(2 + env_num)], mean = 0, sd = par[(3 + env_num):(2 + 2*env_num)]*par[3 + 2*env_num]))
+    hyperprior_shrink = sum(dhalfcauchy(par[(3 + env_num):(3 + 2*env_num)], scale = 1, log = T))
+    
+    return(prior_base + prior_corr + hyperprior_shrink)
+  }
+  
+  prior_repar = compiler::cmpfun(prior_repar)
   
   post = function(par) {
     if (any(par[c(1:2, (3 + env_num):(3 + 2*env_num))] < 0)) 
@@ -289,22 +318,34 @@ run_varsel_env_bd_MCMC = function(tree, f, f.lamb, f.mu, start_gen, par_names, e
     }
   }
   
+  post_repar = function(par) {
+    if (any(par[c(1:2, (3 + env_num):(3 + 2*env_num))] < 0)) 
+    {
+      return(list(LL = -Inf, LP = -Inf, Pr = -Inf))
+    } else {
+      LL = likelihood(par)
+      Pr = prior_repar(par)
+      return(list(LL = LL, LP = LL + Pr, Pr = Pr))
+    }
+  }
+  
   reparametrize = function(par) {
-    par_new = par
+    par_new <- par
     par_new[(3 + env_num):(3 + 2*env_num)] = tan(pi / 2 * par[(3 + env_num):(3 + 2*env_num)])
     par_new[3:(2 + env_num)] = par[3:(2 + env_num)] * par_new[(3 + env_num):(2 + 2*env_num)] * par_new[3 + 2*env_num]
     return(par_new)
   }
   
   model = create_model(start_val = start_gen, par_names = par_names, posterior = post, reparametrize = reparametrize,
-                      proposalKernel = proposalKernel, tuning = 0.1)
+                       posterior_reparametrize = post_repar, proposalKernel = proposalKernel, tuning = 0.1)
   
   ptm = proc.time()
   sampler = parallel::mclapply(1:3, function(j){
     filename=paste(pamhLocalName,"_chain_",j,"_mcmc.log.txt",sep="")
     set.seed(j)
     return(autoMetropolisGibbs(model, iterations = iteration, consoleupdates = 100, thin = thin, autoOptimize = TRUE, 
-                               filename=filename, update = update, adaptation = adaptation, verbose = T, random = T, blocks = env_num))
+                               filename=filename, update = update, adaptation = adaptation, verbose = T, blocking = "user", 
+                               blocks = list(c(1,2, 3 + 2*env_num), c(3: (2+env_num)), c((3 + env_num):(2 + 2*env_num)))))
   }, mc.cores = nCPU, mc.silent = T)
   
   rep = coda::mcmc.list(lapply(1:3,function(j){coda::mcmc(sampler[[j]]$chain[-(1:10),-c((npar+1):(npar+3))])}))
@@ -325,7 +366,8 @@ run_varsel_env_bd_MCMC = function(tree, f, f.lamb, f.mu, start_gen, par_names, e
       modelI$start_val = sampler[[j]]$last_par
       filename=paste(pamhLocalName,"_chain_",j,"_mcmc.log.txt",sep="")
       return(autoMetropolisGibbs(modelI, iterations = iteration, consoleupdates = 100, thin = thin, autoOptimize = F,
-                                 filename=filename, update = update, adaptation = adaptation, verbose = T, random = T, blocks = env_num))
+                                 filename=filename, update = update, adaptation = adaptation, verbose = T, blocking = "user", 
+                                 blocks = list(c(1,2, 3 + 2*env_num), c(3: (2+env_num)), c((3 + env_num):(2 + 2*env_num)))))
     }, mc.cores = nCPU, mc.silent = T)
     
     for(j in 1:3){sampler[[j]]$chain = coda::mcmc(rbind(sampler[[j]]$chain, sampler2[[j]]$chain[-1,]))}

@@ -2,8 +2,8 @@ library(RPANDA)
 
 inputs <- c(commandArgs(trailingOnly=TRUE))
 JobId <- inputs[1] # Seed value for the random generation 
-which_prior <- inputs[2]  #Options: unif, norm, exp
-extinction_rate = inputs[3] #Options: const, ratio
+env_true <- "Temperature"  # Environmental function for the generation of the trees
+extinction_rate = "const" #Options: const, ratio
 
 set.seed(as.numeric(JobId))
 sessionInfo()
@@ -18,7 +18,7 @@ source("./Functions/logPsi_c.R")
 source("./Functions/MLE.R")
 source("./Functions/halfnormal.R")
 source("./Functions/laplace.R")
-source("./Functions/run_env_bd_MCMC.R")
+source("./Functions/run_varsel_env_bd_MCMC.R")
 source("./Functions/proposal.R")
 
 #############################################################################################################
@@ -28,13 +28,13 @@ source("./Functions/proposal.R")
 #############################################################################################################
 
 
-#################                     Phylogenetic tree simulation                   #########################
+#################                   Phylogenetic tree simulation                   #########################
 
-phylo <- readRDS(paste("phylo/phylo_40_", extinction_rate, "_Temperature_CO2",  JobId, ".rds", sep = ""))
+phylo <- readRDS(paste("phylo/phylo_52_", extinction_rate, "_Temperature_",  JobId, ".rds", sep = ""))
 
 # Total time and sampling fraction
-tot_time <- max(node.age(phylo)$ages)  #crown age of the phylogeny
-f <- 1  #sampling ratio
+tot_time <- max(node.age(phylo)$ages)
+f_total <- 1
 
 # Environmental function definition
 load("./Data/InfTemp.R")
@@ -47,9 +47,9 @@ env_list <- list("Temperature" = InfTemp, "CO2" = co2, "SeaLevel" = sealevel, "d
 env_list_names = c("Temperature", "CO2", "SeaLevel", "d13C" , "Silica")
 env_num_tot <- length(env_list)
 
-env_names <- c("Temperature", "CO2")
-env_num <- 2
-tot_time_env = 40  #Used for smoothing of the environmental function
+env_name <- c("Temperature", "CO2" , "SeaLevel", "d13C", "Silica")
+env_num <- length(env_name)
+tot_time_env = 52  #Used for smoothing of the environmental function
 
 time_env <- list()
 tot_times_env <- list()
@@ -57,7 +57,7 @@ env_data <- list()
 env_scales <- list()
 env_baseline <- list()
 
-for(name in env_names){
+for(name in env_name){
   time_env[[name]] <- env_list[[name]][env_list[[name]][,1] <= tot_time_env, 1]
   tot_times_env[[name]] <- max(env_list[[name]][env_list[[name]][,1] <= tot_time_env, 1])
   env_scales[[name]] <-  max((env_list[[name]][env_list[[name]][,1] <= tot_time_env,2]-min(env_list[[name]][env_list[[name]][,1] <= tot_time_env,2])))
@@ -67,7 +67,7 @@ for(name in env_names){
 
 if(tot_time_env < tot_time){print("!!!WARNING!!! tot_time_env < tot_phylo_time")}
 
-rm(InfTemp, env_list)
+rm(InfTemp, co2, sealevel, silica, d13c)
 
 # Smoothing of the env data and environmental function
 dof <- c(500, 30, rep(500, 2), 30) # degrees of freedom for the smoothing of the environmental functions
@@ -75,12 +75,12 @@ names(dof) = env_list_names
 
 spline_result <- list()
 for(j in 1:env_num){
-  spline_result[[env_names[j]]] <- smooth.spline(time_env[[env_names[j]]], env_data[[env_names[j]]], df = dof[j])
+  spline_result[[env_name[j]]] <- smooth.spline(time_env[[env_name[j]]], env_data[[env_name[j]]], df = dof[j])
 }
 
 env_func <- function(t) {
   env_pred <- matrix(0, length(t), env_num)
-  for (j in 1:env_num){env_pred[,j] = predict(spline_result[[env_names[j]]], t)$y}
+  for (j in 1:env_num){env_pred[,j] = predict(spline_result[[env_name[j]]], t)$y}
   return(env_pred)
 }
 
@@ -94,7 +94,7 @@ upper_bound_tab <- upper_bound + upper_bound_control*(upper_bound-lower_bound)
 lower_bound_tab <- lower_bound - lower_bound_control*(upper_bound-lower_bound)
 
 # Tabulation of the function from lower_bound -10%, to upper_bound + 10%
-time_tabulated <- seq(from = lower_bound_tab, to = upper_bound_tab, length.out = 1 + 1e6)
+time_tabulated <- seq(from = lower_bound_tab, to = upper_bound_tab, length.out = 1 + 1e5)
 env_tabulated <- env_func(time_tabulated)
 
 # Tabulated function
@@ -105,55 +105,39 @@ env_func_tab <- function(t){
   return(matrix(env_tabulated[index,], length(t), env_num))
 }
 
-rm(env_data, spline_result, time_env, tot_times_env, dof, j, lower_bound, lower_bound_control, name, time_tabulated,
+rm(env_data, spline_result, time_env, tot_times_env, dof, lower_bound, lower_bound_control, name, time_tabulated,
    upper_bound, upper_bound_control, env_func)
 
 # Constant extinction rate, variable speciation rate
-f.lamb <- function(t, par){par[1]*exp(env_func_tab(t)%*%par[3:4])}
+f.lamb <- function(t, par){par[1]*exp(env_func_tab(t)%*%par[3:(env_num+2)])}
 if (extinction_rate == "const") {
   f.mu <- function(t, par){par[2]}
 } else if (extinction_rate == "ratio") {
   f.mu <- function(t, par){par[2]*f.lamb(t,par)}
 }
 
-# Priors definition
-if (which_prior == "unif") {
-  priorDensity <- function(par){
-    sum(dunif(par, min = c(rep(0, 2), rep(-5, env_num)), max = rep(5, 2 + env_num), log = T))
-  }
-  parGen = function(n = 1){
-    runif(3, min = c(rep(0, 2), rep(-1, env_num)), max = rep(1, 2 + env_num))
-  }
-} else if (which_prior == "norm") {
-  priorDensity <- function(par){
-    sum(dhalfnorm(par[1:2], sigma = rep(2, 2))) + sum(dnorm(par[3:(2 + env_num)], mean = rep(0, env_num), sd = rep(2, env_num)))
-  }
-  parGen = function(n = 1){
-    c(rhalfnorm(2, sigma = rep(1, 2)), rnorm(env_num, mean = rep(0, env_num), sd = rep(1, env_num)))
-  }
-} else if (which_prior == "exp") {
-  priorDensity <- function(par){
-    sum(dexp(par[1:2], rate = rep(4, 2))) + sum(dlaplace(par[3:(2 + env_num)], mean = rep(0, env_num), rate = rep(2, env_num)))
-  }
-  parGen = function(n = 1){
-    c(rexp(2, rate = rep(2, 2)), rlaplace(env_num, mean = rep(0, env_num), rate = rep(1, env_num)))
-  }
+par_names <- c("lambda_0", "mu_0",
+               "theta_T", "theta_CO2", "theta_sea", "theta_Si", "theta_d13C",
+               "eps_T", "eps_CO2", "eps_sea", "eps_Si", "eps_d13C",
+               "tau")
+
+parGen = function(n = 1) {
+  par = 1:(3 + 2*env_num)
+  par[c(1:2, (3 + env_num):(3 + 2*env_num))] = c(rexp(2, rate = 1), runif(1 + env_num, min = 0, max = 0.5))
+  par[3:(2 + env_num)] = rnorm(env_num, mean = 0, sd = 0.5)
+  
+  return(par)
 }
 
-priorDensity <- compiler::cmpfun(priorDensity)
+pamhLocalName = paste("tracer_logfile/tracer_logfile_", extinction_rate, "_",  env_true, "_",  JobId, sep = "")
 
-par_names <- c("lambda_0", "mu_0", "theta_1", "theta_2")
-
-# logfile for the MCMC, can be used in tracer
-pamhLocalName = paste("tracer_logfile/tracer_logfile_", extinction_rate, "_", which_prior, "_", env_name[1], "_", env_name[2], "_", Job, sep = "")
-
-sampler <- run_env_bd_MCMC(tree = phylo, f = f_total, f.lamb = f.lamb, f.mu = f.mu, prior = priorDensity, start_gen = parGen, 
-                           par_names = par_names, pamhLocalName = pamhLocalName, proposalKernel = "uniform", iteration = 1e4, 
-                           thin = 1e2, update = 1e2, adaptation = 1e4, max_iter = 5e5, seed = NULL, nCPU = 3)
+sampler <- run_varsel_env_bd_MCMC(tree = phylo, f = f_total, f.lamb = f.lamb, f.mu = f.mu, start_gen = parGen,
+                                  par_names = par_names, env_num = env_num, pamhLocalName = pamhLocalName, proposalKernel = "uniform", iteration = 1e4,
+                                  thin = 1e2, update = 1e2, adaptation = 1e4, max_iter = 5e5, seed = NULL, nCPU = 3)
 
 #MCMC estimation
-chain_list = coda::mcmc.list(lapply(1:3,function(j){coda::mcmc(sampler[[j]]$chain[-(1:10),1:4])}))
-par_MCMC = summary(chain_list)$statistics
+chain_list = coda::mcmc.list(lapply(1:3,function(j){coda::mcmc(sampler[[j]]$chain[-(1:10),1:(3 + 2*env_num)])}))
+par_MCMC = summary(chain_list)
 
 #MLE estimation
 nbtips <- Ntip(phylo)
@@ -167,17 +151,17 @@ tjs <- ages[2:(length(ages[,2])-nbtips),2]
 rm(from_past, ages)
 
 likelihood <- function(par){
-  npar = length(par_names)
+  if (par[1] < 0 || par[2] < 0) return(-Inf)
   f.lamb.env <- function(t){f.lamb(t, par)}
   f.mu.env <- function(t){f.mu(t, par)}
-  ll <- likelihood_bd_mod_c(nbtips, age, tjs, f.lamb.env, f.mu.env, f = 1, dt = 1e-4, cond = "crown")
+  ll <- likelihood_bd_mod_c(nbtips, age, tjs, f.lamb.env, f.mu.env, f, dt = 1e-4, cond = "crown")
   return(ll)
 }
 
 likelihood <- compiler::cmpfun(likelihood)
 
-par_0_MLE <- rep(0.5, 4)  #Starting point for the MLE
+par_0_MLE <- rep(0.5, env_num+2)
 par_MLE <- MLE(likelihood, par_0_MLE, meth = "Nelder-Mead")
 
-saveRDS(list(MLE = par_MLE, MCMC = par_MCMC, treesize = nbtips), file = paste("bayes_twovar_outdata/estimates_", extinction_rate, "_", which_prior,"_", env_name[1], "_", env_name[2], "_", Job, ".rds", sep =  ""))
-saveRDS(sampler, file = paste("bayes_twovar_outdata/sampler_", extinction_rate, "_", which_prior,"_", env_name[1], "_", env_name[2], "_", Job, ".rds", sep = ""))
+saveRDS(list(MLE = par_MLE, MCMC = par_MCMC, treesize = nbtips), file = paste("varsel_onevar_outdata/estimates_", extinction_rate, "_",  env_true, "_",  JobId, ".rds", sep =  ""))
+saveRDS(sampler, file = paste("varsel_onevar_outdata/sampler_", extinction_rate, "_",  env_true, "_",  JobId, ".rds", sep = ""))
