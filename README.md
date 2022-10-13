@@ -53,3 +53,10 @@ Rscript Bayes_onevar.R [seed] [prior] [extinction_rate]
 ```
 Options for `prior`: `unif`, `norm`, `exp`.
 Options for `extinction_rate`: `const`, `ratio`.
+
+## [Variable_selection_onevar](Variable_selection_onevar.R)
+Example of how performing a MH-MCMC sampling of the horseshoe posterior implementing the variable selection procedure.
+
+```
+Rscript Variable_selection_onevar.R [seed]
+```
